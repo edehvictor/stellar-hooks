@@ -7,6 +7,7 @@ import {
   signTransaction,
   signAuthEntry,
   signBlob,
+  WatchWalletChanges,
 } from "@stellar/freighter-api";
 import type { FreighterState, SignTransactionOptions, UseFreighterReturn } from "../types";
 
@@ -22,8 +23,17 @@ type Action =
 function reducer(state: FreighterState, action: Action): FreighterState {
   switch (action.type) {
     case "SET_LOADING":
+      if (state.isLoading === action.payload) return state;
       return { ...state, isLoading: action.payload, error: null };
     case "SET_CONNECTED":
+      if (
+        state.isConnected &&
+        state.publicKey === action.publicKey &&
+        state.network === action.network &&
+        state.networkPassphrase === action.networkPassphrase
+      ) {
+        return state;
+      }
       return {
         ...state,
         isInstalled: true,
@@ -35,6 +45,7 @@ function reducer(state: FreighterState, action: Action): FreighterState {
         error: null,
       };
     case "SET_DISCONNECTED":
+      if (!state.isConnected && state.publicKey === null) return state;
       return {
         ...state,
         isConnected: false,
@@ -45,6 +56,7 @@ function reducer(state: FreighterState, action: Action): FreighterState {
         error: null,
       };
     case "SET_NOT_INSTALLED":
+      if (!state.isInstalled && !state.isLoading) return state;
       return { ...state, isInstalled: false, isLoading: false };
     case "SET_ERROR":
       return { ...state, isLoading: false, error: action.payload };
@@ -121,8 +133,34 @@ export function useFreighter(): UseFreighterReturn {
     }
 
     void probe();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // Subscribe to changes (address, network, passphrase)
+  useEffect(() => {
+    if (!state.isInstalled) return;
+
+    const watcher = new WatchWalletChanges();
+
+    watcher.watch((changes) => {
+      if (changes.address) {
+        dispatch({
+          type: "SET_CONNECTED",
+          publicKey: changes.address,
+          network: changes.network || "",
+          networkPassphrase: changes.networkPassphrase || "",
+        });
+      } else {
+        dispatch({ type: "SET_DISCONNECTED" });
+      }
+    });
+
+    return () => {
+      watcher.stop();
+    };
+  }, [state.isInstalled]);
 
   const connect = useCallback(async () => {
     dispatch({ type: "SET_LOADING", payload: true });
